@@ -21,6 +21,18 @@ app_license = "mit"
 # 	}
 # ]
 
+doc_events = {
+    "*": {
+        "validate": "backdate_entry.backdate_entry.doctype.backdate_permission.backdate_permission.check_back_date_permission"
+    }
+}
+
+doctype_js = {
+    "Backdate Permission": "public/js/backdate_permission.js"
+}
+
+
+
 # Includes in <head>
 # ------------------
 
