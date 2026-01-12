@@ -9,66 +9,68 @@ class BackdatePermission(Document):
 	pass
 
 def check_back_date_permission(doc, method=None):
-    """
-    Check if backdated entry is allowed for this DocType and current user/role.
-    Uses the selected date_field from Backdate Permission Detail (child table).
-    """
-
-    #frappe.msgprint(f"Backdate check triggered for {doc.doctype}")
     today_date = getdate(today())
-    doc_date = None
-    date_field_used = None
 
-    # 1️⃣ Get the single Backdate Permission document
     try:
         perm = frappe.get_doc("Backdate Permission")
     except frappe.DoesNotExistError:
-        frappe.msgprint("No Backdate Permission setup found.")
-        return  # No setup → skip or allow
+        return  # No setup → allow
 
     if not perm.permission_details:
-        return  # No child table rows → skip
+        return
 
     allowed = False
+    applicable_rule_found = False
+    date_field_used = None
+    diff_days = 0
 
-    # 2️⃣ Iterate over child table rows matching this DocType
+    user = frappe.session.user
+    user_roles = frappe.get_roles(user)
+
     for row in perm.permission_details:
+        # 1️⃣ Match DocType
         if row.doc_type != doc.doctype:
             continue
 
-        # Skip if date_field is missing or not present in the document
+        # 2️⃣ Match permission target FIRST
+        if row.permission_type == "User":
+            if row.user != user:
+                continue
+        elif row.permission_type == "Role":
+            if row.role not in user_roles:
+                continue
+        else:
+            continue
+
+        applicable_rule_found = True
+
+        # 3️⃣ Validate date field
         if not row.date_field or row.date_field not in doc.as_dict():
             continue
 
-        date_field_used = row.date_field
         doc_date = getdate(doc.get(row.date_field))
-
-        # Skip if not backdated
         diff_days = date_diff(today_date, doc_date)
+
+        # Not backdated → always allowed
         if diff_days <= 0:
             return
 
-        # Check permission by user or role
-        if row.permission_type == "User" and row.user == frappe.session.user:
-            if diff_days <= row.allowed_days:
-                allowed = True
-                break
+        # 4️⃣ Check allowed days
+        if diff_days <= row.allowed_days:
+            allowed = True
+            return  # Allowed → exit safely
 
-        elif row.permission_type == "Role":
-            user_roles = frappe.get_roles(frappe.session.user)
-            if row.role in user_roles and diff_days <= row.allowed_days:
-                allowed = True
-                break
+        # Save for error message ONLY if rule applies
+        date_field_used = row.date_field
 
-    # 3️⃣ If not allowed → block
-    if not allowed and date_field_used:
+    # 5️⃣ Block only if a relevant rule existed
+    if applicable_rule_found and not allowed:
         frappe.throw(
-    (
-        f"Backdating {doc.doctype} by {diff_days} day(s) using "
-        f"'{date_field_used.replace('_', ' ').title()}' is not allowed for this user or role. "
-        f"Please select a valid date within the allowed range."
-    )
-)
+            f"Backdating {doc.doctype} by {diff_days} day(s) using "
+            f"'{date_field_used.replace('_', ' ').title()}' is not allowed for this user or role. "
+            f"Please select a valid date within the allowed range."
+        )
+
 
 @frappe.whitelist()
 def get_date_fields(doctype_name):
